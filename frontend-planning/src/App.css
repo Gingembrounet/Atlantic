@@ -1,0 +1,65 @@
+/* src/components/Planning.css */
+
+/* La police globale du calendrier */
+.rbc-calendar {
+    font-family: 'Segoe UI', Tahoma, Verdana, sans-serif;
+    background-color: white;
+    border-radius: 12px;
+    box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+    padding: 20px;
+    border: 1px solid #e5e7eb;
+}
+
+/* L'entête (Lun, Mar, Mer...) */
+.rbc-header {
+    padding: 10px 0;
+    font-weight: 600;
+    color: #374151;
+    border-bottom: 2px solid #f3f4f6 !important;
+}
+
+/* Les briques (Les Shifts) */
+.rbc-event {
+    background-color: #3b82f6 !important; /* Bleu moderne */
+    border-radius: 6px !important;
+    border: none !important;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    padding: 2px 5px !important;
+    font-size: 0.85rem;
+    font-weight: 500;
+}
+
+/* La brique sélectionnée */
+.rbc-event.rbc-selected {
+    background-color: #2563eb !important;
+}
+
+/* Le jour actuel (fond jaune moche par défaut -> on le change) */
+.rbc-today {
+    background-color: #f0f9ff !important; /* Bleu très pâle */
+}
+
+/* Les boutons (Mois, Semaine, Aujourd'hui) */
+.rbc-toolbar button {
+    border: 1px solid #d1d5db;
+    color: #374151;
+    border-radius: 6px !important;
+    margin-right: 5px;
+    padding: 8px 12px;
+    transition: all 0.2s;
+}
+
+.rbc-toolbar button:hover {
+    background-color: #f3f4f6;
+}
+
+.rbc-toolbar button.rbc-active {
+    background-color: #1f2937; /* Noir doux quand actif */
+    color: white;
+    border-color: #1f2937;
+}
+
+/* Enlever les lignes inutiles */
+.rbc-month-view, .rbc-time-view, .rbc-agenda-view {
+    border: none !important;
+}

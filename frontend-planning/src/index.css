@@ -1,0 +1,43 @@
+/* src/index.css */
+
+:root {
+  font-family: 'Verdana', Helvetica, sans-serif, system-ui, Avenir, Helvetica, Arial, sans-serif;
+  line-height: 1.5;
+  font-weight: 400;
+
+  color: #1e293b; /* Une couleur de texte gris foncé doux, pas noir pur */
+  background-color: #f8fafc; /* Fond gris très léger */
+
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* On force la police sur les titres et les champs de formulaire */
+body, button, input, select, textarea {
+  font-family: inherit;
+}
+
+body {
+  margin: 0;
+  padding: 0;
+  min-width: 320px;
+  min-height: 100vh;
+}
+
+/* Un petit bonus pour que les boites aient la bonne taille (padding inclus) */
+*, *::before, *::after {
+  box-sizing: border-box;
+}
+
+/* Animations globales */
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes slideIn {
+  from { transform: translateX(100%); }
+  to { transform: translateX(0); }
+}
