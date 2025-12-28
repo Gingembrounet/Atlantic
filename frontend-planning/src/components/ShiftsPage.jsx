@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Plus, Store, Clock, Trash2 } from 'lucide-react';
+import { Plus, Store, Clock, Trash2, Coffee } from 'lucide-react'; // J'ai ajouté l'icône Coffee ☕
 import api from '../api';
 
 const ShiftsPage = () => {
@@ -13,11 +13,21 @@ const ShiftsPage = () => {
 
   const [showModal, setShowModal] = useState(false);
   
-  // NOUVEAU : applicable_days par défaut (tous les jours activés 0 à 6)
-  const [newTemplate, setNewTemplate] = useState({ 
-    name: '', start_time: '09:00', end_time: '17:00', position: 'Service', 
-    applicable_days: [0, 1, 2, 3, 4, 5, 6] 
-  });
+  // --- ÉTAT UNIQUE : On met TOUT dans newTemplate ---
+  const initialTemplateState = { 
+    name: '', 
+    start_time: '09:00', 
+    end_time: '17:00', 
+    position: 'Service', 
+    applicable_days: [0, 1, 2, 3, 4, 5, 6],
+    // Infos Pauses intégrées ici :
+    break_type: 'flexible',
+    break_duration: 0,
+    break_times: [], 
+    break_paid: false
+  };
+
+  const [newTemplate, setNewTemplate] = useState(initialTemplateState);
 
   // Liste des jours pour l'affichage
   const DAYS = ['L', 'M', 'M', 'J', 'V', 'S', 'D'];
@@ -39,6 +49,7 @@ const ShiftsPage = () => {
     try {
       const res = await api.get('/establishments');
       setEstablishments(res.data);
+      if (res.data.length > 0 && !selectedEst) setSelectedEst(res.data[0]);
     } catch (err) { console.error(err); }
   };
 
@@ -49,15 +60,46 @@ const ShiftsPage = () => {
     } catch (err) { console.error(err); }
   };
 
+  // --- LOGIQUE PAUSE RIGIDE (Mise à jour pour taper dans newTemplate) ---
+  const addBreakTime = () => {
+    const currentTimes = newTemplate.break_times || [];
+    setNewTemplate({ ...newTemplate, break_times: [...currentTimes, { start: '', end: '' }] });
+  };
+
+  const removeBreakTime = (index) => {
+    const newTimes = [...(newTemplate.break_times || [])];
+    newTimes.splice(index, 1);
+    setNewTemplate({ ...newTemplate, break_times: newTimes });
+  };
+
+  const updateBreakTime = (index, field, value) => {
+    const newTimes = [...(newTemplate.break_times || [])];
+    newTimes[index][field] = value;
+    setNewTemplate({ ...newTemplate, break_times: newTimes });
+  };
+
   const handleCreateTemplate = async (e) => {
     e.preventDefault();
     try {
-      await api.post('/shift-templates', { ...newTemplate, establishment_id: selectedEst.id });
+      // Préparation du payload (nettoyage si nécessaire)
+      const payload = { 
+        ...newTemplate, 
+        establishment_id: selectedEst.id,
+        // Si flexible, on vide break_times pour être propre
+        break_times: newTemplate.break_type === 'flexible' ? null : newTemplate.break_times,
+        // Si rigide, on met duration à 0
+        break_duration: newTemplate.break_type === 'rigid' ? 0 : newTemplate.break_duration
+      };
+
+      await api.post('/shift-templates', payload);
+      
       setShowModal(false);
       loadTemplates(selectedEst.id);
-      // Reset
-      setNewTemplate({ name: '', start_time: '09:00', end_time: '17:00', position: 'Service', applicable_days: [0, 1, 2, 3, 4, 5, 6] });
-    } catch (err) { alert("Erreur création"); }
+      setNewTemplate(initialTemplateState); // Reset total facile !
+    } catch (err) { 
+        console.error(err);
+        alert("Erreur création"); 
+    }
   };
 
   const handleDeleteTemplate = async (id) => {
@@ -68,14 +110,11 @@ const ShiftsPage = () => {
     } catch(err) { alert("Erreur"); }
   };
 
-  // --- FONCTION POUR GÉRER LE CLIC SUR LES JOURS ---
   const toggleDay = (dayIndex) => {
     const currentDays = newTemplate.applicable_days;
     if (currentDays.includes(dayIndex)) {
-        // Si présent, on l'enlève
         setNewTemplate({ ...newTemplate, applicable_days: currentDays.filter(d => d !== dayIndex) });
     } else {
-        // Sinon, on l'ajoute
         setNewTemplate({ ...newTemplate, applicable_days: [...currentDays, dayIndex].sort() });
     }
   };
@@ -121,17 +160,24 @@ const ShiftsPage = () => {
                     <div style={{color: '#64748b', fontSize: '0.9rem', display:'flex', alignItems:'center', gap:'5px', marginBottom:'10px'}}>
                         <Clock size={14}/> {t.start_time} - {t.end_time}
                     </div>
+
+                    {/* Affichage infos pause sur la carte */}
+                    <div style={{fontSize: '0.8rem', color: '#64748b', marginBottom: '10px', display: 'flex', alignItems: 'center', gap: '5px'}}>
+                         <Coffee size={14} /> 
+                         {t.break_type === 'flexible' 
+                            ? `${t.break_duration} min (Flex)` 
+                            : `${t.break_times?.length || 0} créneau(x) fixe(s)`
+                         }
+                    </div>
                     
                     <div style={{display: 'flex', justifyContent:'space-between', alignItems:'center'}}>
                         <div style={styles.badge}>{t.position}</div>
                         
-                        {/* MINI INDICATEUR DES JOURS SUR LA CARTE */}
                         <div style={{display: 'flex', gap: '2px'}}>
                         {DAYS.map((d, i) => (
                             <div key={i} style={{
                                 fontSize: '0.6rem', width: '16px', height: '16px', 
                                 borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center',
-                                // ON AJOUTE LA SÉCURITÉ ICI :
                                 backgroundColor: (t.applicable_days || []).includes(i) ? '#3b82f6' : '#e2e8f0',
                                 color: (t.applicable_days || []).includes(i) ? 'white' : '#94a3b8'
                             }}>{d}</div>
@@ -174,6 +220,91 @@ const ShiftsPage = () => {
                 <option value="Responsable">Responsable</option>
               </select>
 
+              {/* --- GESTION DES PAUSES --- */}
+              <div style={{ marginTop: '5px', padding: '15px', background: '#f8fafc', borderRadius: '8px', border: '1px solid #e2e8f0', marginBottom: '20px' }}>
+                  <h4 style={{ margin: '0 0 10px 0', fontSize: '0.9rem', color: '#475569' }}>☕ Gestion des Pauses</h4>
+                  
+                  <div style={{ marginBottom: '10px' }}>
+                      <label style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '0.9rem', cursor: 'pointer' }}>
+                          <input 
+                              type="checkbox" 
+                              checked={newTemplate.break_paid} 
+                              onChange={(e) => setNewTemplate({...newTemplate, break_paid: e.target.checked})} 
+                          />
+                          Pause rémunérée ?
+                      </label>
+                  </div>
+
+                  <div style={{ display: 'flex', gap: '15px', marginBottom: '15px' }}>
+                      <label style={{ display: 'flex', alignItems: 'center', gap: '5px', fontSize: '0.9rem', cursor: 'pointer' }}>
+                          <input 
+                              type="radio" 
+                              name="breakType" 
+                              value="flexible" 
+                              checked={newTemplate.break_type === 'flexible'} 
+                              onChange={() => setNewTemplate({...newTemplate, break_type: 'flexible'})} 
+                          />
+                          Flexible
+                      </label>
+                      <label style={{ display: 'flex', alignItems: 'center', gap: '5px', fontSize: '0.9rem', cursor: 'pointer' }}>
+                          <input 
+                              type="radio" 
+                              name="breakType" 
+                              value="rigid" 
+                              checked={newTemplate.break_type === 'rigid'} 
+                              onChange={() => setNewTemplate({...newTemplate, break_type: 'rigid'})} 
+                          />
+                          Rigide
+                      </label>
+                  </div>
+
+                  {newTemplate.break_type === 'flexible' && (
+                      <div>
+                          <label style={{ fontSize: '0.85rem', fontWeight: '600', color: '#475569' }}>Durée (minutes)</label>
+                          <input 
+                              type="number" 
+                              placeholder="Ex: 30" 
+                              value={newTemplate.break_duration} 
+                              onChange={(e) => setNewTemplate({...newTemplate, break_duration: parseInt(e.target.value) || 0})}
+                              style={{ ...styles.input, marginTop: '5px', marginBottom: 0 }} 
+                          />
+                      </div>
+                  )}
+
+                  {newTemplate.break_type === 'rigid' && (
+                      <div>
+                          <label style={{ fontSize: '0.85rem', fontWeight: '600', color: '#475569', display: 'block', marginBottom: '5px' }}>
+                              Créneaux de pause
+                          </label>
+                          {newTemplate.break_times?.map((bt, index) => (
+                              <div key={index} style={{ display: 'flex', gap: '5px', marginBottom: '5px' }}>
+                                  <input 
+                                      type="time" 
+                                      value={bt.start} 
+                                      onChange={(e) => updateBreakTime(index, 'start', e.target.value)}
+                                      style={{...styles.input, marginBottom: 0}} 
+                                  />
+                                  <span style={{ alignSelf: 'center' }}>-</span>
+                                  <input 
+                                      type="time" 
+                                      value={bt.end} 
+                                      onChange={(e) => updateBreakTime(index, 'end', e.target.value)}
+                                      style={{...styles.input, marginBottom: 0}} 
+                                  />
+                                  <button type="button" onClick={() => removeBreakTime(index)} style={{ border: 'none', background: '#fee2e2', color: 'red', borderRadius: '4px', cursor: 'pointer', padding: '0 8px' }}>X</button>
+                              </div>
+                          ))}
+                          <button 
+                              type="button" 
+                              onClick={addBreakTime} 
+                              style={{ fontSize: '0.8rem', color: '#3b82f6', background: 'none', border: 'none', cursor: 'pointer', marginTop: '5px', textDecoration: 'underline' }}
+                          >
+                              + Ajouter un créneau
+                          </button>
+                      </div>
+                  )}
+              </div>
+
               {/* --- SELECTEUR DE JOURS --- */}
               <div style={{marginBottom: '20px'}}>
                 <label style={{fontSize:'0.8rem', fontWeight:'bold', display: 'block', marginBottom: '8px'}}>Jours applicables</label>
@@ -212,7 +343,6 @@ const ShiftsPage = () => {
   );
 };
 
-// ... Styles (J'ai pas changé les styles globaux, juste les boutons ronds inline)
 const styles = {
   grid: { display: 'flex', gap: '20px', overflowX: 'auto', paddingBottom: '10px' },
   card: { background: 'white', padding: '15px 25px', borderRadius: '12px', border: '2px solid transparent', boxShadow: '0 4px 6px -1px rgba(0,0,0,0.05)', cursor: 'pointer', minWidth: '200px' },
@@ -225,7 +355,7 @@ const styles = {
   btnPrimary: { background: '#3b82f6', color: 'white', border: 'none', padding: '10px 20px', borderRadius: '8px', fontWeight: 'bold', cursor: 'pointer', display: 'flex', alignItems: 'center' },
   btnCancel: { background: '#f1f5f9', color: '#64748b', border: 'none', padding: '10px 20px', borderRadius: '8px', fontWeight: 'bold', cursor: 'pointer' },
   modalOverlay: { position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 },
-  modalContent: { background: 'white', padding: '30px', borderRadius: '12px', width: '380px' }, // Un peu plus large pour les boutons
+  modalContent: { background: 'white', padding: '30px', borderRadius: '12px', width: '380px', maxHeight: '90vh', overflowY: 'auto' }, 
   input: { width: '100%', padding: '10px', marginBottom: '15px', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '1rem' },
   modalActions: { display: 'flex', justifyContent: 'flex-end', gap: '10px', marginTop: '10px' }
 };

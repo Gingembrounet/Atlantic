@@ -1,29 +1,28 @@
 import React, { useState, useEffect } from 'react';
-import { startOfWeek, addDays, format, isSameDay, parseISO, setHours, setMinutes, differenceInMinutes } from 'date-fns';
+import { startOfWeek, addDays, format, isSameDay, parseISO, differenceInMinutes, eachDayOfInterval } from 'date-fns';
 import { fr } from 'date-fns/locale';
 import api from '../api';
 import ShiftModal from './ShiftModal';
 
-
 const PlanningGrid = () => {
-  // Données
+  // --- ÉTATS ---
   const [establishments, setEstablishments] = useState([]);
   const [selectedEstId, setSelectedEstId] = useState('');
   const [users, setUsers] = useState([]);
   const [shifts, setShifts] = useState([]);
+  const [templates, setTemplates] = useState([]); // Pour la modale
   const [currentDate, setCurrentDate] = useState(new Date());
-  const [templates, setTemplates] = useState([]);
 
   // États pour la Modale
   const [isModalOpen, setIsModalOpen] = useState(false);
-  const [selectedShift, setSelectedShift] = useState(null); // Si null = Création, sinon = Édition
-  const [modalContext, setModalContext] = useState({ userId: null, date: null, userName: '' }); // Pour savoir où on a cliqué
+  const [selectedShift, setSelectedShift] = useState(null); 
+  const [modalContext, setModalContext] = useState({ userId: null, date: null, userName: '' });
 
-  // ... (Calcul dates comme avant)
+  // Dates de la semaine
   const startDate = startOfWeek(currentDate, { weekStartsOn: 1 });
   const weekDays = Array.from({ length: 7 }).map((_, i) => addDays(startDate, i));
 
-  // --- CHARGEMENT --- (Identique à avant)
+  // --- CHARGEMENT ---
   useEffect(() => {
     const fetchEst = async () => {
         try {
@@ -37,92 +36,94 @@ const PlanningGrid = () => {
 
   useEffect(() => {
     if (!selectedEstId) return;
-    fetchData(); // On extrait la fonction pour pouvoir la rappeler après une modif
-  }, [selectedEstId, currentDate]); // Ajout de currentDate pour recharger si on change de semaine
+    fetchData();
+  }, [selectedEstId, currentDate]);
 
-    const fetchData = async () => {
-        try {
-        const params = { establishment_id: selectedEstId };
-        const usersRes = await api.get('/users', { params });
-        const shiftsRes = await api.get('/shifts', { params });
-        const templatesRes = await api.get('/shift-templates', { params }); // <--- AJOUTE ÇA
-        
-        setUsers(usersRes.data);
-        setShifts(shiftsRes.data);
-        setTemplates(templatesRes.data); // <--- ET ÇA
-        } catch (error) { console.error("Erreur data", error); }
-    };
+  const fetchData = async () => {
+    try {
+      const params = { establishment_id: selectedEstId };
+      const usersRes = await api.get('/users', { params });
+      const shiftsRes = await api.get('/shifts', { params });
+      const templatesRes = await api.get('/shift-templates', { params });
+      
+      setUsers(usersRes.data);
+      setShifts(shiftsRes.data);
+      setTemplates(templatesRes.data);
+    } catch (error) { console.error("Erreur data", error); }
+  };
 
   // --- GESTION DES CLICS ---
-
-  // 1. Clic sur une case vide (+)
   const handleEmptySlotClick = (user, date) => {
     setModalContext({ userId: user.id, date: date, userName: user.full_name });
-    setSelectedShift(null); // Mode Création
+    setSelectedShift(null); 
     setIsModalOpen(true);
   };
 
-  // 2. Clic sur un shift existant
   const handleShiftClick = (shift, user) => {
     setModalContext({ userId: user.id, date: null, userName: user.full_name });
-    setSelectedShift(shift); // Mode Édition
+    setSelectedShift(shift); 
     setIsModalOpen(true);
-  };
-
-
-  // --- CALCULATEUR D'HEURES ET COÛT ---
-  const calculateStats = (user) => {
-    let totalMinutes = 0;
-
-    // 1. On trouve tous les shifts de cet user pour la semaine affichée
-    const userShifts = shifts.filter(s => {
-      if (s.user_id !== user.id) return false;
-      // On vérifie que le shift est bien dans la semaine visible (optionnel si l'API filtre déjà, mais plus sûr)
-      const shiftDate = parseISO(s.planned_start);
-      return shiftDate >= startDate && shiftDate < addDays(startDate, 7);
-    });
-
-    // 2. On additionne les durées
-    userShifts.forEach(shift => {
-      // On ne compte que le temps de travail effectif (pas les congés/maladie)
-      if (shift.type === 'work') {
-        const start = parseISO(shift.planned_start);
-        const end = parseISO(shift.planned_end);
-        totalMinutes += differenceInMinutes(end, start);
-      }
-    });
-
-    const hours = totalMinutes / 60;
-    const cost = hours * (user.hourly_rate || 0); // On sécurise si pas de taux
-
-    return { 
-      hours: hours.toFixed(1), // 1 chiffre après la virgule (ex: 35.5)
-      cost: cost.toFixed(0)    // Arrondi à l'entier (ex: 450)
-    };
   };
 
   // --- ACTIONS (API) ---
-
-  const handleSaveShift = async (formData) => {
+const handleSaveShift = async (formData) => {
     try {
-        if (selectedShift) {
-            // UPDATE
-            await api.put(`/shifts/${selectedShift.id}`, formData);
-        } else {
-            // CREATE
-            // On ajoute l'user_id qui manquait dans le formData
-            await api.post('/shifts', { ...formData, user_id: modalContext.userId });
+        // --- CAS 1 : MODIFICATION ou CRÉATION SIMPLE ---
+        if (selectedShift || !formData.isMultiDay) {
+            const payload = { ...formData };
+            // On nettoie les champs inutiles du multi-jour
+            delete payload.isMultiDay; 
+            delete payload.multi_start_date; 
+            delete payload.multi_end_date;
+
+            if (selectedShift) {
+                await api.put(`/shifts/${selectedShift.id}`, payload);
+            } else {
+                payload.user_id = modalContext.userId;
+                await api.post('/shifts', payload);
+            }
+        } 
+        
+        // --- CAS 2 : CRÉATION MULTI-JOURS (La Boucle) ---
+        else {
+            // 1. On récupère toutes les dates entre début et fin
+            const dates = eachDayOfInterval({
+                start: parseISO(formData.multi_start_date),
+                end: parseISO(formData.multi_end_date)
+            });
+
+            // 2. On prépare toutes les requêtes
+            const requests = dates.map(date => {
+                const dateStr = format(date, 'yyyy-MM-dd');
+                // On crée un payload pour CE jour-là
+                const dailyPayload = {
+                    user_id: modalContext.userId,
+                    position: formData.position,
+                    type: formData.type,
+                    quantity: formData.quantity,
+                    // On force les heures par défaut (ex: 09h-17h) car c'est obligatoire en base
+                    // même si on ne les affiche pas pour les congés
+                    planned_start: `${dateStr}T09:00:00`,
+                    planned_end: `${dateStr}T17:00:00`
+                };
+                return api.post('/shifts', dailyPayload);
+            });
+
+            // 3. On envoie TOUT en même temps au backend
+            await Promise.all(requests);
         }
+
         setIsModalOpen(false);
-        fetchData(); // On recharge le planning pour voir le changement
+        fetchData(); 
     } catch (err) {
+        console.error(err);
         alert("Erreur lors de l'enregistrement");
     }
   };
 
   const handleDeleteShift = async () => {
       if (!selectedShift) return;
-      if (window.confirm("Voulez-vous vraiment supprimer ce shift ?")) {
+      if (window.confirm("Supprimer ce shift ?")) {
           try {
               await api.delete(`/shifts/${selectedShift.id}`);
               setIsModalOpen(false);
@@ -131,43 +132,51 @@ const PlanningGrid = () => {
       }
   };
 
-  // --- RENDU ---
-
-  const getShiftForUserAndDate = (userId, date) => {
-    return shifts.find(shift => {
-      const shiftDate = parseISO(shift.planned_start);
-      return shift.user_id === userId && isSameDay(shiftDate, date);
+  // --- CALCULATEUR D'HEURES (Seulement le travail pour l'instant) ---
+  const calculateStats = (user) => {
+    let totalMinutes = 0;
+    const userShifts = shifts.filter(s => {
+      if (s.user_id !== user.id) return false;
+      const shiftDate = parseISO(s.planned_start);
+      return shiftDate >= startDate && shiftDate < addDays(startDate, 7);
     });
+
+    userShifts.forEach(shift => {
+      if (shift.type === 'work') {
+        const start = parseISO(shift.planned_start);
+        const end = parseISO(shift.planned_end);
+        totalMinutes += differenceInMinutes(end, start);
+      }
+    });
+
+    const hours = totalMinutes / 60;
+    const cost = hours * (user.hourly_rate || 0);
+
+    return { hours: hours.toFixed(1), cost: cost.toFixed(0) };
+  };
+
+  // --- STYLE DES SHIFTS ---
+  const getShiftStyle = (type) => {
+    const baseStyle = { 
+        padding: '4px 6px', borderRadius: '4px', fontSize: '0.75rem', 
+        cursor: 'pointer', boxShadow: '0 1px 2px rgba(0,0,0,0.1)',
+        marginBottom: '2px', overflow: 'hidden', minHeight: '40px'
+    };
+    switch (type) {
+        case 'vacation': return { ...baseStyle, backgroundColor: '#dcfce7', borderLeft: '3px solid #16a34a', color: '#14532d' };
+        case 'rtt': return { ...baseStyle, backgroundColor: '#f3e8ff', borderLeft: '3px solid #9333ea', color: '#581c87' };
+        case 'sick': return { ...baseStyle, backgroundColor: '#fee2e2', borderLeft: '3px solid #ef4444', color: '#7f1d1d' };
+        case 'unpaid': return { ...baseStyle, backgroundColor: '#f1f5f9', borderLeft: '3px solid #64748b', color: '#334155' };
+        default: return { ...baseStyle, backgroundColor: '#e0f2fe', borderLeft: '3px solid #0ea5e9', color: '#0369a1' };
+    }
   };
 
   const changeWeek = (direction) => setCurrentDate(addDays(currentDate, direction * 7));
 
-  // COULEURS SELON LE TYPE
-  const getShiftStyle = (type) => {
-    const baseStyle = { 
-        padding: '6px 8px', borderRadius: '4px', fontSize: '0.8rem', 
-        cursor: 'pointer', boxShadow: '0 1px 2px rgba(0,0,0,0.1)',
-        marginBottom: '2px', overflow: 'hidden'
-    };
-
-    switch (type) {
-        case 'vacation': // Congé = Vert
-            return { ...baseStyle, backgroundColor: '#dcfce7', borderLeft: '4px solid #16a34a', color: '#14532d' };
-        case 'rtt': // RTT = Violet
-            return { ...baseStyle, backgroundColor: '#f3e8ff', borderLeft: '4px solid #9333ea', color: '#581c87' };
-        case 'sick': // Maladie = Rouge
-            return { ...baseStyle, backgroundColor: '#fee2e2', borderLeft: '4px solid #ef4444', color: '#7f1d1d' };
-        case 'unpaid': // Sans solde = Gris
-            return { ...baseStyle, backgroundColor: '#f1f5f9', borderLeft: '4px solid #64748b', color: '#334155' };
-        default: // Travail (work) = Bleu (Par défaut)
-            return { ...baseStyle, backgroundColor: '#e0f2fe', borderLeft: '4px solid #0ea5e9', color: '#0369a1' };
-    }
-  };
-
   return (
     <div style={{ padding: '20px', background: 'white', borderRadius: '12px', boxShadow: '0 4px 6px rgba(0,0,0,0.05)' }}>
       
-      {/* HEADER (Selecteur + Nav) - Identique à avant */}
+      {/* HEADER */}
       <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '20px', alignItems: 'center' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
             <label style={{ fontWeight: 'bold' }}>📍 Établissement :</label>
@@ -207,28 +216,34 @@ const PlanningGrid = () => {
                   <div style={{ fontSize: '0.75em', color: '#64748b' }}>{user.role}</div>
                 </td>
                 {weekDays.map(day => {
-                  const shift = getShiftForUserAndDate(user.id, day);
+                  const dayShifts = shifts.filter(s => s.user_id === user.id && isSameDay(parseISO(s.planned_start), day));
                   return (
                     <td key={day.toString()} style={styles.tdSlot}>
-                      {shift ? (
-                        // CASE REMPLIE -> CLICK -> EDIT
-                        <div 
-                            style={getShiftStyle(shift.type)}
-                            onClick={() => handleShiftClick(shift, user)}
-                        >
-                          <div style={{ fontWeight: 'bold' }}>
-                            {format(parseISO(shift.planned_start), 'HH:mm')} - {format(parseISO(shift.planned_end), 'HH:mm')}
-                          </div>
-                          <div>{shift.position}</div>
-                        </div>
+                      {dayShifts.length > 0 ? (
+                        dayShifts.map(shift => (
+                           <div 
+                              key={shift.id}
+                              style={getShiftStyle(shift.type)} 
+                              onClick={() => handleShiftClick(shift, user)}
+                           >
+                            {shift.type === 'work' && (
+                             <div style={{ fontWeight: 'bold' }}>
+                               {format(parseISO(shift.planned_start), 'HH:mm')} - {format(parseISO(shift.planned_end), 'HH:mm')}
+                             </div>
+                            )}
+                             <div>{shift.position}</div>
+                             
+                             {/* --- C'EST ICI QU'ON AFFICHE LA QUANTITÉ --- */}
+                             {shift.quantity && (
+                                <div style={{ fontSize: '0.7rem', fontWeight:'bold', marginTop:'2px', borderTop:'1px dashed rgba(0,0,0,0.1)' }}>
+                                    Qté: {shift.quantity}
+                                </div>
+                             )}
+
+                           </div>
+                        ))
                       ) : (
-                        // CASE VIDE -> CLICK -> CREATE
-                        <div 
-                            style={styles.emptySlot} 
-                            onClick={() => handleEmptySlotClick(user, day)}
-                        >
-                            +
-                        </div>
+                        <div style={styles.emptySlot} onClick={() => handleEmptySlotClick(user, day)}>+</div>
                       )}
                     </td>
                   );
@@ -236,13 +251,11 @@ const PlanningGrid = () => {
                 <td style={{...styles.tdSlot, background: '#f8fafc', borderLeft: '3px solid #cbd5e1', verticalAlign: 'middle', textAlign: 'center'}}>
                     {(() => {
                         const stats = calculateStats(user);
-                        // On change la couleur si on dépasse 35h (petit bonus visuel)
                         const isOvertime = parseFloat(stats.hours) > 35;
                         return (
                             <div>
-                                <div style={{fontWeight: 'bold', fontSize: '1.1rem', color: isOvertime ? '#ef4444' : '#1e293b'}}>
-                                    {stats.hours}h
-                                </div>
+                                <div style={{fontWeight: 'bold', fontSize: '1.1rem', color: isOvertime ? '#ef4444' : '#1e293b'}}>{stats.hours}h</div>
+                                <div style={{fontSize: '0.8rem', color: '#64748b'}}>{stats.cost} €</div>
                             </div>
                         );
                     })()}
@@ -253,7 +266,6 @@ const PlanningGrid = () => {
         </table>
       </div>
 
-      {/* MODALE (Rendue conditionnellement) */}
       <ShiftModal 
         isOpen={isModalOpen}
         onClose={() => setIsModalOpen(false)}
@@ -269,16 +281,14 @@ const PlanningGrid = () => {
   );
 };
 
-// ... Styles identiques à avant ...
 const styles = {
   select: { padding: '8px 12px', borderRadius: '6px', border: '1px solid #cbd5e1', cursor: 'pointer', outline: 'none' },
   navBtn: { padding: '8px 12px', borderRadius: '6px', border: '1px solid #cbd5e1', background: 'white', cursor: 'pointer' },
-  table: { width: '100%', borderCollapse: 'collapse', minWidth: '800px' },
+  table: { width: '100%', borderCollapse: 'collapse', minWidth: '900px' },
   thUser: { textAlign: 'left', padding: '15px', borderBottom: '2px solid #e2e8f0', width: '200px', backgroundColor: '#f8fafc' },
   thDate: { padding: '15px', borderBottom: '2px solid #e2e8f0', backgroundColor: '#f8fafc', textAlign: 'center' },
   tdUser: { padding: '15px', borderBottom: '1px solid #e2e8f0', borderRight: '1px solid #e2e8f0', backgroundColor: 'white' },
   tdSlot: { borderBottom: '1px solid #e2e8f0', borderRight: '1px solid #e2e8f0', height: '80px', verticalAlign: 'top', padding: '5px' },
-  shiftCard: { backgroundColor: '#e0f2fe', borderLeft: '4px solid #0ea5e9', color: '#0369a1', padding: '6px 8px', borderRadius: '4px', fontSize: '0.8rem', cursor: 'pointer', boxShadow: '0 1px 2px rgba(0,0,0,0.1)' },
   emptySlot: { height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'transparent', cursor: 'pointer', fontSize: '1.5rem', transition: 'color 0.2s', ':hover': { color: '#cbd5e1' } }
 };
 

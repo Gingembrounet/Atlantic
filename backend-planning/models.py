@@ -35,28 +35,38 @@ class User(Base):
 
 class Shift(Base):
     __tablename__ = "shifts"
+
     id = Column(Integer, primary_key=True, index=True)
-    
-    # On garde tes noms précis
-    planned_start = Column(String, nullable=True)
-    planned_end = Column(String, nullable=True)
+    planned_start = Column(String)
+    planned_end = Column(String)
     position = Column(String)
     type = Column(String, default="work")
-    quantity = Column(Float, nullable=True)
+    quantity = Column(Float, nullable=True) # Pour les congés (ex: 1.0 jour)
+    
+    # --- GESTION DES PAUSES ---
+    break_type = Column(String, default="flexible") # "flexible" ou "rigid"
+    break_duration = Column(Integer, default=0)     # Durée en minutes
+    break_times = Column(JSON, nullable=True)       # Liste d'horaires [{"start":"12:00", "end":"12:30"}]
+    break_paid = Column(Boolean, default=False)     # Payé ou non
     
     user_id = Column(Integer, ForeignKey("users.id"))
-    
-    # ICI C'EST IMPORTANT : La variable s'appelle "user"
     user = relationship("User", back_populates="shifts")
 
 class ShiftTemplate(Base):
     __tablename__ = "shift_templates"
+
     id = Column(Integer, primary_key=True, index=True)
     name = Column(String)
     start_time = Column(String)
     end_time = Column(String)
     position = Column(String)
     applicable_days = Column(JSON, default=[0, 1, 2, 3, 4, 5, 6])
+    
+    # --- GESTION DES PAUSES (Template) ---
+    break_type = Column(String, default="flexible")
+    break_duration = Column(Integer, default=0)
+    break_times = Column(JSON, nullable=True)
+    break_paid = Column(Boolean, default=False)
     
     establishment_id = Column(Integer, ForeignKey("establishments.id"))
     establishment = relationship("Establishment", back_populates="shift_templates")
